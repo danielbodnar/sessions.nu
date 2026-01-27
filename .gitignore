@@ -1,0 +1,24 @@
+# Editor files
+*.swp
+*.swo
+*~
+.vscode/
+.idea/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Test output
+*.csv
+*.json
+*.nuon
+!package.json
+
+# Config files (user-specific)
+config.nu
+config.toml
+config.json
+config-*.nu
+config-*.toml
+config-*.json
