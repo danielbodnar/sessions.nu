@@ -48,12 +48,15 @@
 
 export use utils.nu [
     DEFAULT_GRACE_PERIOD
+    DEFAULT_BROWSER_GRACE_PERIOD
+    DEFAULT_BROWSERS
     config-dir
 ]
 
 use utils.nu *
 use core.nu *
 use reports.nu *
+use browser.nu *
 
 # Get all work sessions from shell history
 #
@@ -546,6 +549,9 @@ export def "sessions config" [
 ]: nothing -> record {
     let patterns = (resolve-patterns [] [] $profile)
     let grace = (resolve-grace-period $profile)
+    let domains = (resolve-domains [] [] $profile)
+    let browser_grace = (resolve-browser-grace-period $profile)
+    let browsers = (resolve-browsers [] $profile)
     let dir = (config-dir)
 
     {
@@ -553,6 +559,229 @@ export def "sessions config" [
         profile: (if $profile != null { $profile } else { "default" })
         patterns: $patterns
         grace_period: $grace
+        domains: $domains
+        browser_grace_period: $browser_grace
+        browsers: $browsers
         config_exists: ($"($dir)/config.nu" | path exists)
     }
+}
+
+# Browser session tracking
+#
+# Tracks time spent in browsers on specific domains.
+# Uses browser history from Chrome Canary, Chrome Unstable, Firefox Dev Edition, etc.
+#
+# Domain resolution priority:
+# 1. --domains flag (explicit)
+# 2. Piped input (["domain1" "domain2"] | sessions browser)
+# 3. Config file ($XDG_CONFIG_HOME/sessions/config.nu)
+#
+# # Examples
+#
+# ```nushell
+# # Uses domains from config
+# sessions browser
+#
+# # Pipe domains
+# ["maybachsystems.com" "gitlab.com"] | sessions browser
+#
+# # Specific browsers only
+# sessions browser --browsers ["chrome-canary"]
+#
+# # Daily browser report
+# sessions browser daily
+# ```
+export def "sessions browser" [
+    --domains (-d): list<string>       # Domain patterns to match
+    --browsers (-b): list<string>      # Limit to specific browsers
+    --profile: string                  # Config profile name
+    --grace: duration                  # Max gap between visits in session
+    --help (-h)                        # Show help
+]: [nothing -> any, list<string> -> any] {
+    let piped = $in
+
+    if $help {
+        print "Sessions Browser - Track time spent in browsers"
+        print ""
+        print "Usage: sessions browser [OPTIONS]"
+        print "       <domains> | sessions browser [OPTIONS]"
+        print ""
+        print "Domain Resolution (in order of priority):"
+        print "  1. --domains flag"
+        print "  2. Piped input: [\"domain1\" \"domain2\"] | sessions browser"
+        print "  3. Config file: $XDG_CONFIG_HOME/sessions/config.nu"
+        print ""
+        print "Options:"
+        print "  -d, --domains <list>     Domain patterns to match in URLs"
+        print "  -b, --browsers <list>    Limit to specific browsers:"
+        print "                           chrome-canary, chrome-unstable, firefox-dev,"
+        print "                           chrome, chromium, firefox"
+        print "  --profile <name>         Use named config profile"
+        print "  --grace <duration>       Gap between sessions (default: 30min or from config)"
+        print "  -h, --help               Show this help"
+        print ""
+        print "Subcommands:"
+        print "  sessions browser daily   Daily browser report"
+        print "  sessions browser weekly  Weekly browser report"
+        print "  sessions browser monthly Monthly browser report"
+        print "  sessions browser paths   Show discovered browser paths"
+        print ""
+        print "Examples:"
+        print "  sessions browser                                 # Auto-detect from config"
+        print "  [\"maybachsystems.com\"] | sessions browser       # Pipe domains"
+        print "  sessions browser --browsers [\"chrome-canary\"]   # Specific browser"
+        print "  sessions browser daily | last 7                  # Last week"
+        return null
+    }
+
+    let explicit = if $domains != null { $domains } else { [] }
+    let piped_list = if $piped != null { $piped } else { [] }
+    let resolved_domains = (resolve-domains $explicit $piped_list $profile)
+    let resolved_browsers = (resolve-browsers ($browsers | default []) $profile)
+    let resolved_grace = if $grace != null {
+        resolve-browser-grace-period $profile --explicit $grace
+    } else {
+        resolve-browser-grace-period $profile
+    }
+
+    if ($resolved_domains | is-empty) {
+        error make {
+            msg: "No domains specified"
+            help: "Provide domains via --domains flag, stdin, or config file 'domains' key"
+        }
+    }
+
+    core-browser-sessions --domains $resolved_domains --browsers $resolved_browsers --grace-period $resolved_grace
+}
+
+# Daily browser tracking report
+#
+# # Examples
+#
+# ```nushell
+# sessions browser daily
+# sessions browser daily --nested
+# ```
+export def "sessions browser daily" [
+    --domains (-d): list<string>
+    --browsers (-b): list<string>
+    --profile: string
+    --grace: duration
+    --nested (-n)                       # Return nested data for drill-down
+]: nothing -> table {
+    let resolved_domains = (resolve-domains ($domains | default []) [] $profile)
+    let resolved_browsers = (resolve-browsers ($browsers | default []) $profile)
+    let resolved_grace = if $grace != null { $grace } else { resolve-browser-grace-period $profile }
+
+    if ($resolved_domains | is-empty) {
+        error make { msg: "No domains specified" help: "Add 'domains' to config or use --domains flag" }
+    }
+
+    let data = (browser-report-daily --domains $resolved_domains --browsers $resolved_browsers --grace-period $resolved_grace)
+
+    if $nested {
+        $data
+    } else {
+        $data | each { |r| {
+            date: ($r.date | format-date)
+            day_of_week: $r.day_of_week
+            hours: $r.hours
+            session_count: $r.session_count
+            page_views: $r.page_views
+        }}
+    }
+}
+
+# Weekly browser tracking report
+#
+# # Examples
+#
+# ```nushell
+# sessions browser weekly
+# sessions browser weekly --nested
+# ```
+export def "sessions browser weekly" [
+    --domains (-d): list<string>
+    --browsers (-b): list<string>
+    --profile: string
+    --grace: duration
+    --nested (-n)                       # Return nested data for drill-down
+]: nothing -> table {
+    let resolved_domains = (resolve-domains ($domains | default []) [] $profile)
+    let resolved_browsers = (resolve-browsers ($browsers | default []) $profile)
+    let resolved_grace = if $grace != null { $grace } else { resolve-browser-grace-period $profile }
+
+    if ($resolved_domains | is-empty) {
+        error make { msg: "No domains specified" help: "Add 'domains' to config or use --domains flag" }
+    }
+
+    let data = (browser-report-weekly --domains $resolved_domains --browsers $resolved_browsers --grace-period $resolved_grace)
+
+    if $nested {
+        $data
+    } else {
+        $data | each { |r| {
+            week_start: ($r.week_start | format-date)
+            week_end: ($r.week_end | format-date)
+            hours: $r.hours
+            days_active: $r.days_active
+            session_count: $r.session_count
+            page_views: $r.page_views
+        }}
+    }
+}
+
+# Monthly browser tracking report
+#
+# # Examples
+#
+# ```nushell
+# sessions browser monthly
+# sessions browser monthly --nested
+# ```
+export def "sessions browser monthly" [
+    --domains (-d): list<string>
+    --browsers (-b): list<string>
+    --profile: string
+    --grace: duration
+    --nested (-n)                       # Return nested data for drill-down
+]: nothing -> table {
+    let resolved_domains = (resolve-domains ($domains | default []) [] $profile)
+    let resolved_browsers = (resolve-browsers ($browsers | default []) $profile)
+    let resolved_grace = if $grace != null { $grace } else { resolve-browser-grace-period $profile }
+
+    if ($resolved_domains | is-empty) {
+        error make { msg: "No domains specified" help: "Add 'domains' to config or use --domains flag" }
+    }
+
+    let data = (browser-report-monthly --domains $resolved_domains --browsers $resolved_browsers --grace-period $resolved_grace)
+
+    if $nested {
+        $data
+    } else {
+        $data | each { |r| {
+            month: ($r.month | month-string)
+            hours: $r.hours
+            weeks_active: $r.weeks_active
+            days_active: $r.days_active
+            session_count: $r.session_count
+            page_views: $r.page_views
+        }}
+    }
+}
+
+# Show discovered browser history paths
+#
+# Lists all browser history files found on the system.
+#
+# # Examples
+#
+# ```nushell
+# sessions browser paths
+# sessions browser paths --browsers ["chrome-canary" "firefox-dev"]
+# ```
+export def "sessions browser paths" [
+    --browsers (-b): list<string>       # Limit to specific browsers
+]: nothing -> table {
+    discover-browser-paths --browsers ($browsers | default [])
 }

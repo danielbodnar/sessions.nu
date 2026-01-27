@@ -1,13 +1,15 @@
 # sessions.nu
 
-> Time tracking from your shell history — beautifully
+> Time tracking from your shell and browser history — beautifully
 
-A Nushell module that analyzes your [atuin](https://atuin.sh/) shell history to track time spent on projects. Groups commands into sessions based on time gaps, with configurable grace periods and flexible pattern matching.
+A Nushell module that analyzes your [atuin](https://atuin.sh/) shell history and browser history to track time spent on projects. Groups commands and page visits into sessions based on time gaps, with configurable grace periods and flexible pattern matching.
 
 ## Features
 
-- **Automatic session detection** — Groups commands into work sessions based on configurable time gaps
-- **Flexible pattern matching** — Filter by directory paths, project names, or IP addresses
+- **Automatic session detection** — Groups commands/visits into work sessions based on configurable time gaps
+- **Shell history tracking** — Via [atuin](https://atuin.sh/) for directory-based pattern matching
+- **Browser history tracking** — Chrome Canary, Chrome Unstable, Firefox Developer Edition, and more
+- **Flexible pattern matching** — Filter by directory paths, project names, IP addresses, or domains
 - **Multiple aggregation levels** — View by session, day, week, or month
 - **Native Nushell types** — All dates are `datetime` objects for powerful filtering
 - **Configurable** — Via config files, CLI flags, or piped input
@@ -18,7 +20,8 @@ A Nushell module that analyzes your [atuin](https://atuin.sh/) shell history to 
 ### Prerequisites
 
 - [Nushell](https://www.nushell.sh/) v0.100+
-- [atuin](https://atuin.sh/) for shell history
+- [atuin](https://atuin.sh/) for shell history (optional but recommended)
+- Chrome/Chromium or Firefox for browser history (optional)
 
 ### Setup
 
@@ -40,6 +43,8 @@ use ~/.config/nushell/modules/sessions *    # Makes subcommands available
 
 ## Quick Start
 
+### Shell History
+
 ```nushell
 # View weekly time summary (uses current directory as pattern)
 sessions weekly
@@ -54,6 +59,22 @@ sessions --profile work -g week
 sessions -g week -f csv > timesheet.csv
 ```
 
+### Browser History
+
+```nushell
+# View browser sessions (uses domains from config)
+sessions browser
+
+# Weekly browser report
+sessions browser weekly
+
+# Pipe domains directly
+["github.com" "docs.example.com"] | sessions browser
+
+# Specific browsers only
+sessions browser --browsers ["chrome-canary" "firefox-dev"]
+```
+
 ## Configuration
 
 ### Config File
@@ -62,8 +83,28 @@ Create `~/.config/sessions/config.nu`:
 
 ```nushell
 {
+    # Shell history patterns (match against cwd)
     patterns: ["myproject" "work" "192.168.1.100"]
+
+    # Browser history domains (match against URLs)
+    domains: [
+        "github.com/myorg"
+        "dash.cloudflare.com/account-id"
+        "gitlab.com/username"
+    ]
+
+    # Preferred browsers (checked in order)
+    browsers: [
+        "chrome-canary"
+        "chrome-unstable"
+        "firefox-dev"
+    ]
+
+    # Shell session grace period
     grace_period: 60min
+
+    # Browser session grace period (shorter since browsing is more continuous)
+    browser_grace_period: 30min
 }
 ```
 
@@ -77,6 +118,7 @@ Create project-specific configs:
 # ~/.config/sessions/config-work.nu
 {
     patterns: ["company-repo" "staging.example.com"]
+    domains: ["jira.company.com" "github.com/company"]
     grace_period: 90min
 }
 ```
@@ -96,12 +138,12 @@ sessions config                # View current configuration
 ### Pattern Resolution
 
 Patterns are resolved in this order:
-1. `--patterns` flag
+1. `--patterns` or `--domains` flag
 2. Piped input (`["p1" "p2"] | sessions`)
-3. Config file patterns
-4. Current directory name
+3. Config file patterns/domains
+4. Current directory name (shell only)
 
-### Basic Commands
+### Shell History Commands
 
 ```nushell
 # All sessions (default grouping)
@@ -118,6 +160,24 @@ sessions summary
 # Pattern analysis
 sessions by-dow      # By day of week
 sessions by-time     # By time of day
+```
+
+### Browser History Commands
+
+```nushell
+# All browser sessions
+sessions browser
+
+# Aggregate by time period
+sessions browser daily
+sessions browser weekly
+sessions browser monthly
+
+# Show discovered browser paths
+sessions browser paths
+
+# Limit to specific browsers
+sessions browser --browsers ["chrome-canary"]
 ```
 
 ### Output Formats
@@ -172,9 +232,24 @@ sessions | where ($it.duration > 3hr)
 sessions | where ($it.date >= ((date now) - 7day))
 ```
 
+## Supported Browsers
+
+Browser history files are auto-discovered in priority order:
+
+| Browser | Config Name | Type |
+|---------|-------------|------|
+| Google Chrome Canary | `chrome-canary` | Chromium |
+| Google Chrome Unstable | `chrome-unstable` | Chromium |
+| Firefox Developer Edition | `firefox-dev` | Firefox |
+| Google Chrome | `chrome` | Chromium |
+| Chromium | `chromium` | Chromium |
+| Firefox | `firefox` | Firefox |
+
+Use `sessions browser paths` to see which browsers are detected on your system.
+
 ## Output Fields
 
-### Sessions
+### Shell Sessions
 
 | Field | Type | Description |
 |-------|------|-------------|
@@ -184,6 +259,18 @@ sessions | where ($it.date >= ((date now) - 7day))
 | `duration` | `duration` | Total session length |
 | `commands` | `int` | Number of commands |
 | `primary_cwd` | `string` | Most-used directory |
+
+### Browser Sessions
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `date` | `datetime` | Session date |
+| `start` | `datetime` | Session start time |
+| `end` | `datetime` | Session end time |
+| `duration` | `duration` | Total session length |
+| `page_views` | `int` | Number of page visits |
+| `primary_domain` | `string` | Most-visited domain |
+| `browsers` | `string` | Browsers used in session |
 
 ### Weekly/Monthly
 
@@ -197,10 +284,18 @@ sessions | where ($it.date >= ((date now) - 7day))
 
 ## How It Works
 
+### Shell History
 1. **Query atuin** — Searches your shell history database for commands matching patterns
 2. **Group into sessions** — Commands within the grace period (default 60min) form one session
-3. **Add grace time** — Each session gets +1 hour added (accounts for thinking/reading time)
+3. **Add grace time** — Each session gets grace time added (accounts for thinking/reading time)
 4. **Aggregate** — Roll up into daily/weekly/monthly summaries
+
+### Browser History
+1. **Discover browsers** — Finds Chrome/Firefox history files on your system
+2. **Query SQLite** — Searches visit history for URLs matching domain patterns
+3. **Handle timestamps** — Converts Chrome (Windows epoch) and Firefox (Unix epoch) timestamps
+4. **Group into sessions** — Visits within the grace period (default 30min) form one session
+5. **Aggregate** — Roll up into daily/weekly/monthly summaries
 
 ## Examples
 
@@ -217,6 +312,14 @@ sessions -g week --start (date now | format date "%Y-%m-01") -f md
 # Compare time across projects
 ["project-a"] | sessions summary | get total_hours  # => 45.5
 ["project-b"] | sessions summary | get total_hours  # => 32.2
+```
+
+### Combined Shell + Browser Analysis
+
+```nushell
+# How much time on Cloudflare this week?
+sessions browser weekly | last | get hours  # Browser time
+sessions weekly | last | get hours          # Shell time
 ```
 
 ### Export All Reports

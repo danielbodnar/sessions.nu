@@ -3,6 +3,18 @@
 # Default grace period between sessions
 export const DEFAULT_GRACE_PERIOD = 60min
 
+# Default browser grace period (shorter since browsing is more continuous)
+export const DEFAULT_BROWSER_GRACE_PERIOD = 30min
+
+# Priority list of browsers to check
+export const DEFAULT_BROWSERS = [
+    "chrome-canary"
+    "chrome-unstable"
+    "firefox-dev"
+    "chrome"
+    "firefox"
+]
+
 # Get config directory path
 export def config-dir []: nothing -> path {
     let xdg = ($env.XDG_CONFIG_HOME? | default $"($env.HOME)/.config")
@@ -104,6 +116,79 @@ export def resolve-grace-period [
     } else {
         $DEFAULT_GRACE_PERIOD
     }
+}
+
+# Get browser grace period from config or default
+export def resolve-browser-grace-period [
+    profile?: string           # Config profile name
+    --explicit: duration       # Explicit grace period from --grace flag
+]: nothing -> duration {
+    if $explicit != null {
+        return $explicit
+    }
+
+    let config = (load-config $profile)
+    let config_grace = $config.browser_grace_period?
+
+    if $config_grace != null {
+        if ($config_grace | describe) == "duration" {
+            $config_grace
+        } else {
+            $config_grace | into duration
+        }
+    } else {
+        $DEFAULT_BROWSER_GRACE_PERIOD
+    }
+}
+
+# Get domain patterns from config
+#
+# Priority:
+# 1. Explicit --domains flag (if provided)
+# 2. Piped input (list of domains)
+# 3. Config file domains
+export def resolve-domains [
+    explicit_domains: list<string> = []  # Domains from --domains flag
+    piped_domains: list<string> = []     # Domains from stdin
+    profile?: string                     # Config profile name
+]: nothing -> list<string> {
+    # 1. Explicit --domains flag takes priority
+    if ($explicit_domains | length) > 0 {
+        return $explicit_domains
+    }
+
+    # 2. Piped input
+    if ($piped_domains | length) > 0 {
+        return $piped_domains
+    }
+
+    # 3. Config file
+    let config = (load-config $profile)
+    let config_domains = ($config.domains? | default [])
+    if ($config_domains | length) > 0 {
+        return $config_domains
+    }
+
+    # No default for domains - must be specified
+    []
+}
+
+# Get browsers list from config or default
+export def resolve-browsers [
+    explicit_browsers: list<string> = []  # Browsers from --browsers flag
+    profile?: string                      # Config profile name
+]: nothing -> list<string> {
+    if ($explicit_browsers | length) > 0 {
+        return $explicit_browsers
+    }
+
+    let config = (load-config $profile)
+    let config_browsers = ($config.browsers? | default [])
+    if ($config_browsers | length) > 0 {
+        return $config_browsers
+    }
+
+    $DEFAULT_BROWSERS
 }
 
 # Build SQL WHERE clause for directory patterns
