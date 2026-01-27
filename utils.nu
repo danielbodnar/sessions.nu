@@ -36,12 +36,12 @@ export def load-config [
     let json_file = $"($dir)/($base).json"
 
     if ($nu_file | path exists) {
-        # Source nu file which should define a record
-        open $nu_file
+        # Nu files contain a record literal - evaluate it
+        open $nu_file | from nuon
     } else if ($toml_file | path exists) {
-        open $toml_file
+        open $toml_file | from toml
     } else if ($json_file | path exists) {
-        open $json_file
+        open $json_file | from json
     } else {
         # Return empty config - will use defaults
         {}

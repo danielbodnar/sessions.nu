@@ -312,10 +312,13 @@ export def main [
 # ```
 export def "sessions daily" [
     --patterns (-p): list<string>
-    --grace (-g): duration = 60min
+    --profile: string                 # Config profile name
+    --grace (-g): duration
     --nested (-n)                     # Return nested data for drill-down
 ]: nothing -> table {
-    let data = (report-daily --patterns $patterns --grace-period $grace)
+    let resolved_patterns = (resolve-patterns ($patterns | default []) [] $profile)
+    let resolved_grace = if $grace != null { $grace } else { resolve-grace-period $profile }
+    let data = (report-daily --patterns $resolved_patterns --grace-period $resolved_grace)
 
     if $nested {
         $data
@@ -344,10 +347,13 @@ export def "sessions daily" [
 # ```
 export def "sessions weekly" [
     --patterns (-p): list<string>
-    --grace (-g): duration = 60min
+    --profile: string                 # Config profile name
+    --grace (-g): duration
     --nested (-n)                     # Return nested data for drill-down
 ]: nothing -> table {
-    let data = (report-weekly --patterns $patterns --grace-period $grace)
+    let resolved_patterns = (resolve-patterns ($patterns | default []) [] $profile)
+    let resolved_grace = if $grace != null { $grace } else { resolve-grace-period $profile }
+    let data = (report-weekly --patterns $resolved_patterns --grace-period $resolved_grace)
 
     if $nested {
         $data
@@ -376,10 +382,13 @@ export def "sessions weekly" [
 # ```
 export def "sessions monthly" [
     --patterns (-p): list<string>
-    --grace (-g): duration = 60min
+    --profile: string                 # Config profile name
+    --grace (-g): duration
     --nested (-n)                     # Return nested data for drill-down
 ]: nothing -> table {
-    let data = (report-monthly --patterns $patterns --grace-period $grace)
+    let resolved_patterns = (resolve-patterns ($patterns | default []) [] $profile)
+    let resolved_grace = if $grace != null { $grace } else { resolve-grace-period $profile }
+    let data = (report-monthly --patterns $resolved_patterns --grace-period $resolved_grace)
 
     if $nested {
         $data
@@ -408,9 +417,12 @@ export def "sessions monthly" [
 # ```
 export def "sessions summary" [
     --patterns (-p): list<string>
-    --grace (-g): duration = 60min
+    --profile: string                 # Config profile name
+    --grace (-g): duration
 ]: nothing -> record {
-    report-summary --patterns $patterns --grace-period $grace
+    let resolved_patterns = (resolve-patterns ($patterns | default []) [] $profile)
+    let resolved_grace = if $grace != null { $grace } else { resolve-grace-period $profile }
+    report-summary --patterns $resolved_patterns --grace-period $resolved_grace
 }
 
 # Breakdown by day of week
@@ -424,9 +436,12 @@ export def "sessions summary" [
 # ```
 export def "sessions by-dow" [
     --patterns (-p): list<string>
-    --grace (-g): duration = 60min
+    --profile: string                 # Config profile name
+    --grace (-g): duration
 ]: nothing -> table<day: string, sessions: int, hours: float> {
-    report-by-dow --patterns $patterns --grace-period $grace
+    let resolved_patterns = (resolve-patterns ($patterns | default []) [] $profile)
+    let resolved_grace = if $grace != null { $grace } else { resolve-grace-period $profile }
+    report-by-dow --patterns $resolved_patterns --grace-period $resolved_grace
 }
 
 # Breakdown by time of day
@@ -440,9 +455,12 @@ export def "sessions by-dow" [
 # ```
 export def "sessions by-time" [
     --patterns (-p): list<string>
-    --grace (-g): duration = 60min
+    --profile: string                 # Config profile name
+    --grace (-g): duration
 ]: nothing -> table<period: string, sessions: int, hours: float> {
-    report-by-time --patterns $patterns --grace-period $grace
+    let resolved_patterns = (resolve-patterns ($patterns | default []) [] $profile)
+    let resolved_grace = if $grace != null { $grace } else { resolve-grace-period $profile }
+    report-by-time --patterns $resolved_patterns --grace-period $resolved_grace
 }
 
 # Export all reports to files
@@ -458,10 +476,13 @@ export def "sessions by-time" [
 export def "sessions export" [
     output_dir: path = "."             # Directory to save reports
     --patterns (-p): list<string>
-    --grace (-g): duration = 60min
+    --profile: string                  # Config profile name
+    --grace (-g): duration
     --format (-f): string = "csv"      # Output format: csv, tsv, nuon, json
 ]: nothing -> nothing {
-    report-export $output_dir --patterns $patterns --grace-period $grace --format $format
+    let resolved_patterns = (resolve-patterns ($patterns | default []) [] $profile)
+    let resolved_grace = if $grace != null { $grace } else { resolve-grace-period $profile }
+    report-export $output_dir --patterns $resolved_patterns --grace-period $resolved_grace --format $format
 }
 
 # Initialize sessions configuration
