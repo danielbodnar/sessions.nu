@@ -22,3 +22,18 @@ config.json
 config-*.nu
 config-*.toml
 config-*.json
+
+.data/
+./data/
+
+# Logs
+logs/
+*.log
+
+**data/
+**logs/
+
+data/
+.sessions.config.nu
+**/.sessions.config.nu
+**.sessions.config.nu
