@@ -57,6 +57,7 @@ use utils.nu *
 use core.nu *
 use reports.nu *
 use browser.nu *
+use parse.nu *
 
 # Get all work sessions from shell history
 #
@@ -101,6 +102,8 @@ export def main [
     --min-hours: float                  # Minimum hours filter
     --max-hours: float                  # Maximum hours filter
     --flat                              # Flatten nested data for exports
+    --raw (-r)                          # Show raw unified history (all sources, deduplicated)
+    --details (-d)                      # Show detailed command list with metadata
     --help (-h)                         # Show help
 ]: [nothing -> any, list<string> -> any] {
     # Capture piped input if present
@@ -129,6 +132,8 @@ export def main [
         print "  --min-hours <float>      Minimum hours filter"
         print "  --max-hours <float>      Maximum hours filter"
         print "  --flat                   Flatten nested data for export formats"
+        print "  -r, --raw                Show raw unified history (all sources, deduplicated)"
+        print "  -d, --details            Show detailed command list with metadata"
         print "  -h, --help               Show this help"
         print ""
         print "Subcommands:"
@@ -147,7 +152,75 @@ export def main [
         print "  sessions --profile work -g week             # Use work profile"
         print "  sessions -g week -f csv                     # Weekly CSV"
         print "  sessions --start 2026-01-01 -f md           # Filter by date"
+        print "  sessions --raw                              # All commands from all sources"
+        print "  sessions --details -p [\"myproject\"]         # Commands with metadata"
         return null
+    }
+
+    # Handle --raw flag: show unified history from all sources (deduplicated)
+    if $raw {
+        let history = (load-all-history --profile $profile)
+        let filtered = if $patterns != null and ($patterns | length) > 0 {
+            $history | where { |e|
+                if $e.cwd == null { true } else { $patterns | any { |p| $e.cwd | str contains $p } }
+            }
+        } else {
+            $history
+        }
+        
+        return (match $format {
+            "table" => { $filtered | select command timestamp cwd source_type }
+            "csv" => { $filtered | select command timestamp cwd source_type | to csv }
+            "tsv" => { $filtered | select command timestamp cwd source_type | to tsv }
+            "json" => { $filtered | to json }
+            "nuon" => { $filtered | to nuon }
+            "md" => { $filtered | select command timestamp cwd source_type | to md }
+        })
+    }
+
+    # Handle --details flag: show commands with full metadata
+    if $details {
+        let history = (load-all-history --profile $profile)
+        let explicit = if $patterns != null { $patterns } else { [] }
+        let piped_list = if $piped != null { $piped } else { [] }
+        let resolved_patterns = (resolve-patterns $explicit $piped_list $profile)
+        
+        # Filter by cwd patterns
+        let filtered = if ($resolved_patterns | length) > 0 {
+            $history | where { |e|
+                if $e.cwd == null { 
+                    false  # Exclude entries without cwd when filtering
+                } else { 
+                    $resolved_patterns | any { |p| $e.cwd | str contains $p } 
+                }
+            }
+        } else {
+            $history
+        }
+        
+        # Apply date filters
+        let after_start = if $start != null {
+            let start_dt = ($start | into datetime)
+            $filtered | where { |e| $e.timestamp != null and $e.timestamp >= $start_dt }
+        } else {
+            $filtered
+        }
+        
+        let after_end = if $end != null {
+            let end_dt = ($end | into datetime)
+            $after_start | where { |e| $e.timestamp != null and $e.timestamp <= $end_dt }
+        } else {
+            $after_start
+        }
+        
+        return (match $format {
+            "table" => { $after_end }
+            "csv" => { $after_end | to csv }
+            "tsv" => { $after_end | to tsv }
+            "json" => { $after_end | to json }
+            "nuon" => { $after_end | to nuon }
+            "md" => { $after_end | to md }
+        })
     }
 
     # Validate group option
@@ -564,6 +637,97 @@ export def "sessions config" [
         browsers: $browsers
         config_exists: ($"($dir)/config.nu" | path exists)
     }
+}
+
+# Unified command history from all configured sources
+#
+# Loads and deduplicates history from multiple sources:
+# - Atuin SQLite databases
+# - Nushell SQLite databases
+# - Nushell plain text history
+# - ZSH extended history format
+#
+# # Examples
+#
+# ```nushell
+# sessions history                      # All commands
+# sessions history --with-timestamp     # Only commands with timestamps
+# sessions history -p ["myproject"]     # Filter by cwd pattern
+# sessions history | where command =~ "git"  # Search commands
+# ```
+export def "sessions history" [
+    --patterns (-p): list<string>       # Filter by cwd patterns
+    --profile: string                   # Config profile name
+    --with-timestamp                    # Only entries with timestamps
+    --format (-f): string = "table"     # Output: table, csv, json, nuon
+]: nothing -> table {
+    let history = (get-unified-history 
+        --profile $profile 
+        --patterns ($patterns | default [])
+        --with-timestamp-only=$with_timestamp
+    )
+    
+    match $format {
+        "table" => { $history }
+        "csv" => { $history | to csv }
+        "json" => { $history | to json }
+        "nuon" => { $history | to nuon }
+        _ => { $history }
+    }
+}
+
+# Show configured history sources and their status
+#
+# Lists all history files from the config and their detected formats.
+#
+# # Examples
+#
+# ```nushell
+# sessions sources                      # List all sources
+# sessions sources --discover ./data    # Discover files in directory
+# ```
+export def "sessions sources" [
+    --profile: string                   # Config profile name
+    --discover (-d): path               # Discover history files in directory
+]: nothing -> table {
+    if $discover != null {
+        return (discover-history-files $discover)
+    }
+    
+    let config = (load-config $profile)
+    let sources = ($config.history_sources? | default [])
+    
+    if ($sources | is-empty) {
+        print "No history_sources configured. Using default atuin location."
+        let atuin_db = $"($env.HOME)/.local/share/atuin/history.db"
+        return [{
+            path: $atuin_db
+            format: (if ($atuin_db | path exists) { detect-format $atuin_db } else { "not found" })
+            size: (if ($atuin_db | path exists) { (ls $atuin_db | get 0.size) } else { 0b })
+            configured: false
+        }]
+    }
+    
+    # Expand globs and show each file (expand ~ first)
+    $sources | each { |s|
+        let expanded_path = ($s | path expand)
+        let expanded = if ($s | str contains "*") {
+            try { glob $expanded_path } catch { [] }
+        } else {
+            [$expanded_path]
+        }
+        
+        $expanded | each { |f|
+            let exists = ($f | path exists)
+            {
+                path: $f
+                format: (if $exists { detect-format $f } else { "not found" })
+                size: (if $exists { try { ls $f | get 0.size } catch { 0b } } else { 0b })
+                configured: true
+                pattern: $s
+            }
+        }
+    } | flatten
 }
 
 # Browser session tracking

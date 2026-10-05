@@ -21,12 +21,21 @@ export def config-dir []: nothing -> path {
     $"($xdg)/sessions"
 }
 
+# Get module directory path (where this module is installed)
+export def module-dir []: nothing -> path {
+    # Return the directory containing this module
+    $env.FILE_PWD? | default (
+        [$env.HOME ".config" "nushell" "modules" "sessions"] | path join
+    )
+}
+
 # Load patterns from config file
 #
 # Searches for config files in order:
-# 1. $XDG_CONFIG_HOME/sessions/config.nu
-# 2. $XDG_CONFIG_HOME/sessions/config.toml
-# 3. $XDG_CONFIG_HOME/sessions/config.json
+# 1. .sessions.config.nu in module directory (local project config)
+# 2. $XDG_CONFIG_HOME/sessions/config.nu
+# 3. $XDG_CONFIG_HOME/sessions/config.toml
+# 4. $XDG_CONFIG_HOME/sessions/config.json
 #
 # Config file format (nu):
 #   { patterns: ["project1" "project2"], grace_period: 60min }
@@ -40,12 +49,19 @@ export def config-dir []: nothing -> path {
 export def load-config [
     profile?: string  # Optional profile name (loads config-{profile}.nu etc)
 ]: nothing -> record {
-    let dir = (config-dir)
+    let mod_dir = (module-dir)
+    let cfg_dir = (config-dir)
     let base = if $profile != null { $"config-($profile)" } else { "config" }
 
-    let nu_file = $"($dir)/($base).nu"
-    let toml_file = $"($dir)/($base).toml"
-    let json_file = $"($dir)/($base).json"
+    # Check for local config in module directory first (highest priority)
+    let local_config = $"($mod_dir)/.sessions.config.nu"
+    if ($local_config | path exists) {
+        return (open $local_config | from nuon)
+    }
+
+    let nu_file = $"($cfg_dir)/($base).nu"
+    let toml_file = $"($cfg_dir)/($base).toml"
+    let json_file = $"($cfg_dir)/($base).json"
 
     if ($nu_file | path exists) {
         # Nu files contain a record literal - evaluate it
